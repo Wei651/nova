@@ -97,6 +97,8 @@ opts = [
                default=2,
                help='How often to retry in seconds when a request '
                     'does conflict'),
+    cfg.StrOpt('chassis_uuid',
+               help='Restrict Ironic nodes to this chassis UUID.'),
     ]
 
 ironic_group = cfg.OptGroup(name='ironic',
@@ -511,6 +513,7 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         """
         try:
+            kwargs['chassis_uuid'] = CONF.ironic.chassis_uuid
             node_list = self.ironicclient.call("node.list", **kwargs)
         except exception.NovaException:
             node_list = []
