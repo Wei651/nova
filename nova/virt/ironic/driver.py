@@ -56,6 +56,8 @@ from nova.virt import hardware
 from nova.virt.ironic import client_wrapper
 from nova.virt.ironic import ironic_states
 from nova.virt.ironic import patcher
+# Modify
+from nova.virt.ironic import neutron
 
 
 ironic = None
@@ -97,6 +99,8 @@ opts = [
                default=2,
                help='How often to retry in seconds when a request '
                     'does conflict'),
+    cfg.StrOpt('chassis_uuid',
+               help='Restrict Ironic nodes to this chassis UUID.'),
     ]
 
 ironic_group = cfg.OptGroup(name='ironic',
@@ -200,6 +204,8 @@ class IronicDriver(virt_driver.ComputeDriver):
             logger.setLevel(level)
 
         self.ironicclient = client_wrapper.IronicClientWrapper()
+        # Modify
+        self.neutron = neutron.NeutronDHCPApi()
 
     def _node_resources_unavailable(self, node_obj):
         """Determine whether the node's resources are in an acceptable state.
@@ -349,7 +355,17 @@ class IronicDriver(virt_driver.ComputeDriver):
             vcpus = 0
             memory_mb = 0
             local_gb = 0
+       
+        # Modify : Add SW Tag/Port
+        if nodes_extra_specs.has_key('sw_tag'):
+            self.swtag=nodes_extra_specs['sw_tag']
 
+        if nodes_extra_specs.has_key('sw_port'):
+            self.swport=nodes_extra_specs['sw_port']
+        #LOG.debug('serenaIronic node %s %s',dic['sw_tag'] , dic['sw_port'])
+        #LOG.info('serenaIronic node %s %s',dic['sw_tag'] , dic['sw_port'])
+        # ================
+       
         dic = {
             'hypervisor_hostname': str(node.uuid),
             'hypervisor_type': self._get_hypervisor_type(),
@@ -370,6 +386,10 @@ class IronicDriver(virt_driver.ComputeDriver):
                 _get_nodes_supported_instances(cpu_arch)),
             'stats': jsonutils.dumps(nodes_extra_specs),
             'numa_topology': None,
+            # Modify 
+            'sw_tag': self.swtag,
+            'sw_port': self.swport,
+            #===================
         }
         return dic
 
@@ -511,6 +531,7 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         """
         try:
+            kwargs['chassis_uuid'] = CONF.ironic.chassis_uuid
             node_list = self.ironicclient.call("node.list", **kwargs)
         except exception.NovaException:
             node_list = []
@@ -756,6 +777,11 @@ class IronicDriver(virt_driver.ComputeDriver):
         flavor = instance.flavor
 
         self._add_driver_fields(node, instance, image_meta, flavor)
+       
+        # Modify : 
+        dic = self._node_resource(node)
+        LOG.debug('serenaIronic node %s %s' % (self.swtag , self.swport))
+        # =========================  
 
         # NOTE(Shrews): The default ephemeral device needs to be set for
         # services (like cloud-init) that depend on it being returned by the
@@ -796,6 +822,10 @@ class IronicDriver(virt_driver.ComputeDriver):
             extra_md = {}
             if admin_password:
                 extra_md['admin_pass'] = admin_password
+
+            node_extra_md = node.extra.get('configdrive_metadata')
+            if node_extra_md:
+                extra_md.update(node_extra_md)
 
             configdrive_value = self._generate_configdrive(
                 instance, node, network_info, extra_md=extra_md,
@@ -1085,16 +1115,20 @@ class IronicDriver(virt_driver.ComputeDriver):
 
         if len(network_info) > 0:
             # not needed if no vif are defined
-            for vif in network_info:
-                for pif in ports:
-                    if vif['address'] == pif.address:
-                        # attach what neutron needs directly to the port
-                        port_id = six.text_type(vif['id'])
-                        patch = [{'op': 'add',
-                                  'path': '/extra/vif_port_id',
-                                  'value': port_id}]
-                        self.ironicclient.call("port.update", pif.uuid, patch)
-                        break
+            for vif, pif in zip(network_info, ports):
+                # attach what neutron needs directly to the port
+                port_id = six.text_type(vif['id'])
+                patch = [{'op': 'add',
+                          'path': '/extra/vif_port_id',
+                          'value': port_id}]
+                self.ironicclient.call("port.update", pif.uuid, patch)
+                # Modify
+                dic=self._node_resource(node);
+                LOG.info(_LI("panpan neutron.update_realswport:  port_id=%(port_id)s switch_id=%(switch_id)s switch_port=%(switch_port)s"),
+                  {'port_id': port_id,
+                   'switch_port': self.swport,
+                   'switch_id': self.swtag})
+                self.neutron.update_realswport(port_id,dic["sw_tag"],dic["sw_port"])
 
     def _unplug_vifs(self, node, instance, network_info):
         # NOTE(PhilDay): Accessing network_info will block if the thread
@@ -1109,7 +1143,7 @@ class IronicDriver(virt_driver.ComputeDriver):
                                       detail=True)
 
             # not needed if no vif are defined
-            for pif in ports:
+            for vif, pif in zip(network_info, ports):
                 if 'vif_port_id' in pif.extra:
                     # we can not attach a dict directly
                     patch = [{'op': 'remove', 'path': '/extra/vif_port_id'}]
