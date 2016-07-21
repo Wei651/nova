@@ -13,60 +13,83 @@
 #    WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
 #    License for the specific language governing permissions and limitations
 #    under the License.
+#
+# version 1.0  7/9/2016  Serena Pan
+#   First working version
+# version 1.1  7/19/2016  Fei Yeh
+#   Authorization Token/Passwords are read in from Neutron and Keystone instead of hard-coded
 
 import time
+from oslo_config import cfg
+from oslo_log import log as logging
 from oslo_serialization import jsonutils
 
 from neutronclient.common import exceptions as neutron_client_exc
 from neutronclient.v2_0 import client as clientv20
 
-def get_sw_port (uuid ):
-   #uuid="xxxxxxxx-xxxxxxxxxxxxxxx-xxxxxxxxx" is the device vif uuid of neutron
-   sw_port=""
-   f = open("/etc/nova/port_list","r")
-   lines = f.readlines()
-   f.close()
-   for i in lines:
-      if i.rstrip('\r\n').split(',')[1] == uuid:
-         return i.rstrip('\r\n').split(',')[0]
+from ironic.common.i18n import _
 
-   fw = open('/etc/nova/port_list', 'w')
-   for i in lines:
-      ne_portuuid = i.rstrip('\r\n').split(',')[1]
-      if ne_portuuid == '' and sw_port == "":
-         #print i.rstrip('\r\n').split(',')[0]
-         sw_port=i.rstrip('\r\n').split(',')[0]
-         fw.write(i.rstrip('\r\n').split(',')[0]+","+uuid+"\n")
-      else:
-         fw.write(i)
-   fw.close()
-   return sw_port
+neutron_opts = [
+    cfg.IntOpt('url_timeout',
+               default=30,
+               help=_('Timeout value for connecting to neutron in seconds.')),
+    cfg.IntOpt('retries',
+               default=3,
+               help=_('Client retries in the case of a failed request.')),
+]
 
-def _build_client():
+CONF = cfg.CONF
+CONF.register_opts(neutron_opts, group='neutron')
+
+LOG = logging.getLogger(__name__)
+
+keystone_opts = [
+    cfg.StrOpt('region_name',
+               help=_('The region used for getting endpoints of OpenStack'
+                      'services.')),
+]
+
+CONF.register_opts(keystone_opts, group='keystone')
+CONF.import_group('keystone_authtoken', 'keystonemiddleware.auth_token')
+
+def _build_client(token=None):
+    """Utility function to create Neutron client."""
+
     params = {
-        'timeout': 200,
-        'retries': 10,
+        'timeout': CONF.neutron.url_timeout,
+        'retries': CONF.neutron.retries,
+        'insecure': CONF.keystone_authtoken.insecure,
+        'ca_cert': CONF.keystone_authtoken.certfile,
     }
 
-    params['username'] = 'nova'
-    params['tenant_name'] = "services"
-    params['password'] = "cham2icair"
-    params['auth_url'] = 'http://chic1:5000/v2.0'
-    params['token'] = 'cham2icair'
-    params['endpoint_url'] = 'http://chic1:9696'
-    params['auth_strategy'] = 'keystone'
+    if CONF.neutron.auth_strategy not in ['noauth', 'keystone']:
+        raise exception.ConfigInvalid(_('Neutron auth_strategy should be '
+                                        'either "noauth" or "keystone".'))
+
+    if CONF.neutron.auth_strategy == 'noauth':
+        params['endpoint_url'] = CONF.neutron.url
+        params['auth_strategy'] = 'noauth'
+    elif (CONF.neutron.auth_strategy == 'keystone' and
+          token is None):
+        params['endpoint_url'] = (CONF.neutron.url or
+                                  keystone.get_service_url('neutron'))
+        params['username'] = CONF.keystone_authtoken.admin_user
+        params['tenant_name'] = CONF.keystone_authtoken.admin_tenant_name
+        params['password'] = CONF.keystone_authtoken.admin_password
+        params['auth_url'] = (CONF.keystone_authtoken.auth_uri or '')
+        if CONF.keystone.region_name:
+            params['region_name'] = CONF.keystone.region_name
+    else:
+        params['token'] = token
+        params['endpoint_url'] = CONF.neutron.url
+        params['auth_strategy'] = None
 
     return clientv20.Client(**params)
-
-# This part need to be modified.
 
 class NeutronDHCPApi():
     """API for communicating to neutron 2.x API."""
     #def update_realswport(self, port_id, sw_id, sw_port):
     def update_realswport(self, port_id, sw_id, sw_port):
-        #
-        #sw_port=get_sw_port(instance)
-        #
         body = {'port': {}}
         body['port'].update({'binding:profile':jsonutils.loads('{"local_link_information": [{"port_id": "'+ sw_port +'", "switch_id": "'+sw_id+'"}]}')})
         #port_req_body = {'port': {"binding:profile":{"local_link_information":[{"switch_id":sw_id,"port_id":sw_port}]}}}
