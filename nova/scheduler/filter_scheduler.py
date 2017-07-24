@@ -86,7 +86,7 @@ class FilterScheduler(driver.Scheduler):
                       {'hosts': len(selected_hosts),
                        'num_instances': num_instances})
 
-            reason = _('There are not enough hosts available.')
+            reason = _('There are not enough hosts available. See https://www.chameleoncloud.org/docs/bare-metal-user-guide/troubleshooting/')
             raise exception.NoValidHost(reason=reason)
 
         dests = [dict(host=host.obj.host, nodename=host.obj.nodename,
