@@ -4632,6 +4632,46 @@ class AggregateAPI(base.Base):
             availability_zones.update_host_availability_zone_cache(context,
                                                                    host_name)
 
+    def _service_or_compute_node_exists(self, ctx, host_or_node):
+        """Returns True if a service host or compute node record could be found
+        for the supplied host_or_node string. We first check to see if a
+        service record can be found with the host matching the host_or_node
+        parameter by looking at the host mapping records in the API database.
+        If we don't find a service record there, we then ask all cell databases
+        to find a compute node with a hypervisor_hostname matching the supplied
+        host_or_node parameter.
+        """
+        try:
+            mapping = objects.HostMapping.get_by_host(ctx, host_or_node)
+            nova_context.set_target_cell(ctx, mapping.cell_mapping)
+            objects.Service.get_by_compute_host(ctx, host_or_node)
+            return True
+        except exception.HostMappingNotFound:
+            try:
+                _find_service_in_cell(ctx, service_host=host_or_node)
+                return True
+            except exception.NotFound:
+                pass
+
+        # Loop over all cells, looking for a compute node with a
+        # hypervisor_hostname matching the supplied search term
+        def find_compute_node(ctx, host_or_node):
+            return len(objects.ComputeNodeList.get_by_hypervisor(
+                ctx, host_or_node))
+
+        cell_results = nova_context.scatter_gather_skip_cell0(
+            ctx, find_compute_node, host_or_node)
+        found_nodes = 0
+        for res in cell_results.values():
+            if res != nova_context.did_not_respond_sentinel:
+                found_nodes = found_nodes + res
+
+        if found_nodes > 1:
+            LOG.debug("Searching for compute nodes matching %s "
+                      "found %d results but expected 1 result.",
+                      host_or_node, len(found_nodes))
+        return found_nodes == 1
+
     @wrap_exception()
     def add_host_to_aggregate(self, context, aggregate_id, host_name):
         """Adds the host to an aggregate."""
@@ -4640,8 +4680,9 @@ class AggregateAPI(base.Base):
         compute_utils.notify_about_aggregate_update(context,
                                                     "addhost.start",
                                                     aggregate_payload)
-        # validates the host; ComputeHostNotFound is raised if invalid
-        objects.Service.get_by_compute_host(context, host_name)
+
+        if not self._service_or_compute_node_exists(context, host_name):
+            raise exception.ComputeHostNotFound(host=host_name)
 
         aggregate = objects.Aggregate.get_by_id(context, aggregate_id)
         self.is_safe_to_update_az(context, aggregate.metadata,
@@ -4667,8 +4708,10 @@ class AggregateAPI(base.Base):
         compute_utils.notify_about_aggregate_update(context,
                                                     "removehost.start",
                                                     aggregate_payload)
-        # validates the host; ComputeHostNotFound is raised if invalid
-        objects.Service.get_by_compute_host(context, host_name)
+
+        if not self._service_or_compute_node_exists(context, host_name):
+            raise exception.ComputeHostNotFound(host=host_name)
+
         aggregate = objects.Aggregate.get_by_id(context, aggregate_id)
         aggregate.delete_host(host_name)
         self.scheduler_client.update_aggregates(context, [aggregate])
