@@ -624,7 +624,7 @@ class HostManager(object):
             # happening after setting this field for the first time
             host_state.update(compute,
                               dict(service),
-                              self._get_aggregates_info(host),
+                              self._get_aggregates_info(compute),
                               self._get_instance_info(context, compute))
 
             seen_nodes.add(state_key)
@@ -645,9 +645,9 @@ class HostManager(object):
         return (self.host_state_map[host] for host in seen_nodes
                 if host in self.host_state_map)
 
-    def _get_aggregates_info(self, host):
+    def _get_aggregates_info(self, compute):
         return [self.aggs_by_id[agg_id] for agg_id in
-                self.host_aggregates_map[host]]
+                self.host_aggregates_map[compute.host]]
 
     def _get_instance_info(self, context, compute):
         """Gets the host instance info from the compute host.
