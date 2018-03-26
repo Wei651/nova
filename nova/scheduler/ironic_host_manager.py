@@ -123,3 +123,7 @@ class IronicHostManager(host_manager.HostManager):
         else:
             return super(IronicHostManager, self)._get_instance_info(context,
                                                                      compute)
+
+    def _get_aggregates_info(self, compute):
+        return [self.aggs_by_id[agg_id] for agg_id in
+                self.host_aggregates_map[compute.hypervisor_hostname]]
