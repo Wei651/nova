@@ -4642,16 +4642,10 @@ class AggregateAPI(base.Base):
         host_or_node parameter.
         """
         try:
-            mapping = objects.HostMapping.get_by_host(ctx, host_or_node)
-            nova_context.set_target_cell(ctx, mapping.cell_mapping)
             objects.Service.get_by_compute_host(ctx, host_or_node)
             return True
         except exception.HostMappingNotFound:
-            try:
-                _find_service_in_cell(ctx, service_host=host_or_node)
-                return True
-            except exception.NotFound:
-                pass
+            pass
 
         # Loop over all cells, looking for a compute node with a
         # hypervisor_hostname matching the supplied search term
@@ -4659,13 +4653,7 @@ class AggregateAPI(base.Base):
             return len(objects.ComputeNodeList.get_by_hypervisor(
                 ctx, host_or_node))
 
-        cell_results = nova_context.scatter_gather_skip_cell0(
-            ctx, find_compute_node, host_or_node)
-        found_nodes = 0
-        for res in cell_results.values():
-            if res != nova_context.did_not_respond_sentinel:
-                found_nodes = found_nodes + res
-
+        found_nodes = find_compute_node(ctx, host_or_node)
         if found_nodes > 1:
             LOG.debug("Searching for compute nodes matching %s "
                       "found %d results but expected 1 result.",
