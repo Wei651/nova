@@ -4644,7 +4644,7 @@ class AggregateAPI(base.Base):
         try:
             objects.Service.get_by_compute_host(ctx, host_or_node)
             return True
-        except exception.HostMappingNotFound:
+        except (exception.HostMappingNotFound, exception.ComputeHostNotFound):
             pass
 
         # Loop over all cells, looking for a compute node with a
