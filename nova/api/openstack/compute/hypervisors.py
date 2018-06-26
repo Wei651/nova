@@ -248,6 +248,7 @@ class HypervisorsController(wsgi.Controller):
         for compute_node in compute_nodes:
             instances = self.host_api.instance_get_all_by_host(context,
                     compute_node.host)
+            instances = [ i for i in instances if i.node == id ]
             service = self.host_api.service_get_by_compute_host(
                 context, compute_node.host)
             hyp = self._view_hypervisor(compute_node, service, False, req,
