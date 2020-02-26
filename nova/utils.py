@@ -66,7 +66,7 @@ LOG = logging.getLogger(__name__)
 
 _IS_NEUTRON = None
 
-synchronized = lockutils.synchronized_with_prefix('nova-')
+synchronized = functools.partial(lockutils.synchronized, lock_file_prefix='nova-', fair=True)
 
 SM_IMAGE_PROP_PREFIX = "image_"
 SM_INHERITABLE_KEYS = (
